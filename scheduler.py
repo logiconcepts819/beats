@@ -9,6 +9,8 @@ http://dx.doi.org/10.1109/90.234856
 """
 
 from config import config
+from ConfigParser import NoOptionError
+from collections import deque
 from db import Session, Song, PlayHistory, Packet, Vote
 import song
 from youtube import get_youtube_video_details, YouTubeVideo
@@ -19,6 +21,14 @@ import time
 import player
 
 PLAYER_NAME = config.get('Player', 'player_name')
+try:
+    DONT_REPEAT_FOR = config.getfloat('Player', 'dont_repeat_for')
+except NoOptionError:
+    DONT_REPEAT_FOR = 0.0
+try:
+    MAX_DONT_REPEAT_FOR = config.getint('Player', 'max_dont_repeat_for')
+except NoOptionError:
+    MAX_DONT_REPEAT_FOR = None
 
 SCHEDULER_INTERVAL_SEC = 0.25
 """Interval at which to run the scheduler loop"""
@@ -26,6 +36,7 @@ SCHEDULER_INTERVAL_SEC = 0.25
 
 class Scheduler(object):
     virtual_time = 0.0
+    discard_pile = deque([])
 
     active_sessions = 0
     """Number of users with currently queued songs"""
@@ -34,6 +45,20 @@ class Scheduler(object):
         self._initialize_virtual_time()
         self._update_active_sessions()
         self._update_finish_times()
+
+    def update_discard_list(self, song_object):
+        # Solution based on http://stackoverflow.com/questions/5467174
+        dont_repeat_for = int(DONT_REPEAT_FOR * song.count_num_songs())
+        if MAX_DONT_REPEAT_FOR is not None:
+            dont_repeat_for = min(MAX_DONT_REPEAT_FOR, dont_repeat_for)
+
+        if dont_repeat_for > 0: # An optimization
+            self.discard_pile.append(song_object['path'])
+            if len(self.discard_pile) > dont_repeat_for:
+                self.discard_pile.popleft()
+
+    def get_random_song(self):
+        return song.random_song_not_in_list(self.discard_pile)
 
     def vote_song(self, user, song_id=None, video_url=None):
         """Vote for a song"""
@@ -194,8 +219,9 @@ class Scheduler(object):
 
     def play_next(self, skip=False):
         if self.empty():
-            random_song = song.random_songs(limit=1)['results']
+            random_song = self.get_random_song()['results']
             if len(random_song) == 1:
+                self.update_discard_list(random_song[0])
                 self.vote_song('RANDOM', random_song[0]['id'])
 
         if not self.empty():
