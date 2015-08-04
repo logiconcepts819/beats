@@ -54,7 +54,7 @@ class Scheduler(object):
 
         if dont_repeat_for > 0: # An optimization
             self.discard_pile.append(song_object['path'])
-            if len(self.discard_pile) > dont_repeat_for:
+            while len(self.discard_pile) > dont_repeat_for:
                 self.discard_pile.popleft()
 
     def get_random_song(self):
