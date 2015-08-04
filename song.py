@@ -9,7 +9,7 @@ from mutagen.flac import FLAC
 from mutagen.oggvorbis import OggVorbis
 from mutagen.mp4 import MP4
 from sqlalchemy.sql import select
-from sqlalchemy.sql.expression import or_, func
+from sqlalchemy.sql.expression import not_, or_, func
 
 PLAYER_NAME = config.get('Player', 'player_name')
 ART_DIR = config.get('Artwork', 'art_path')
@@ -170,6 +170,25 @@ def random_songs(limit=20):
     session.commit()
     songs = [song.dictify() for song in res]
     return {'query': '', 'limit': limit, 'results': songs}
+
+
+def count_num_songs():
+    session = Session()
+    res = session.query(func.count(Song.id)).scalar()
+    session.commit()
+    return res
+
+
+def random_song_not_in_list(blacklisted_filenames):
+    if len(blacklisted_filenames) == 0:
+        return random_songs(limit=1)
+    session = Session()
+    res = session.query(Song).order_by(func.rand()).filter(not_(
+        Song.path.in_(blacklisted_filenames)
+    )).limit(1).all()  # Can't use .first() because we may have zero songs!!!
+    session.commit()
+    songs = [song.dictify() for song in res]
+    return {'query': '', 'limit': 1, 'results': songs}
 
 
 def get_albums_for_artist(artist):
