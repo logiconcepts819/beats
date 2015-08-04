@@ -1,5 +1,7 @@
 [Player]
 player_name = 1104
+dont_repeat_for = 0.5
+max_dont_repeat_for = 100
 
 [Authentication]
 enabled = true
