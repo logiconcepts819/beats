@@ -282,6 +282,7 @@ class Scheduler(object):
         return self.get_queue()
 
     def play_next(self, skip=False):
+        random_song = None
         if self.empty():
             random_song = self.get_random_song()
             if len(random_song) == 1:
@@ -305,7 +306,10 @@ class Scheduler(object):
                     return video.dictify()
                 else:
                     next_song = session.query(Song).get(next_packet.song_id)
-                    self.update_discard_pile_with_song(session, next_song.path)
+                    if random_song is not None:
+                        # Song was not randomly chosen, so update discard pile
+                        self.update_discard_pile_with_song(
+                            session, next_song.path)
                     player.play_media(next_song)
                     next_song.history.append(
                         PlayHistory(user=next_packet.user,
