@@ -8,14 +8,16 @@ IEEE/ACM Trans. Netw. 1, 3 (June 1993), 344-357. DOI=10.1109/90.234856
 http://dx.doi.org/10.1109/90.234856
 """
 
+from collections import deque
 from config import config
 from ConfigParser import NoOptionError
-from collections import deque
 from db import Session, Song, PlayHistory, Packet, Vote
+from sets import Set
 import song
 from youtube import get_youtube_video_details, YouTubeVideo
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import FlushError
+from sqlalchemy.sql.expression import not_, func
 import threading
 import time
 import player
@@ -46,22 +48,58 @@ class Scheduler(object):
         self._update_active_sessions()
         self._update_finish_times()
 
-    def trim_list(self):
-        ideal_list_size = int(DONT_REPEAT_FOR * song.count_num_songs())
-        if MAX_DONT_REPEAT_FOR is not None:
-            ideal_list_size = min(MAX_DONT_REPEAT_FOR, ideal_list_size)
-        while len(self.discard_pile) > ideal_list_size:
+    def trim_list(self, max_list_size):
+        while len(self.discard_pile) > max_list_size:
             self.discard_pile.popleft()
 
-    def update_discard_list(self, song_object):
-        # Solution based on http://stackoverflow.com/questions/5467174
-        self.discard_pile.append(song_object['path'])
-        self.trim_list()
-
     def get_random_song(self):
-        # Trim list in case the playlist size was reduced during playback
-        self.trim_list()
-        return song.random_song_not_in_list(self.discard_pile)
+        # Algorithm based on http://stackoverflow.com/questions/5467174
+
+        # If the condition below holds true, then we only need to fetch the
+        # next song naively
+        if DONT_REPEAT_FOR == 0.0 or MAX_DONT_REPEAT_FOR == 0:
+            return song.random_songs(limit=1)['results']
+
+        # Query the database for the list of songs and a list of at most one
+        # random song that doesn't exist in the discard pile
+        table = Song.__table__
+        session = Session()
+        db_filenames = session.query(table.c.path).all()
+        random_song = session.query(Song).order_by(func.rand())
+        if len(self.discard_pile) != 0:
+            random_song = random_song.filter(
+                not_(Song.path.in_(self.discard_pile)))
+        random_song = random_song.limit(1).all()
+        session.commit()
+
+        # Compute the maximum size of the discard pile
+        max_discard_size = int(DONT_REPEAT_FOR * len(db_filenames))
+        if MAX_DONT_REPEAT_FOR is not None:
+            max_discard_size = min(MAX_DONT_REPEAT_FOR, max_discard_size)
+
+        # Clean up the discard pile
+        if max_discard_size == 0:
+            # Everything gets weeded out in the discard pile in this case
+            self.discard_pile.clear()
+        else:
+            # Efficiently weed out the filenames in the discard pile that don't
+            # exist in the database anymore
+            filename_set = Set(db_filenames)
+            num_filenames = len(self.discard_pile)
+            for k in xrange(num_filenames):
+                filename = self.discard_pile.pop()
+                if (filename, ) in filename_set:
+                    self.discard_pile.appendleft(filename)
+            # Update the discard pile
+            self.trim_list(max_discard_size)
+
+        # Obtain random song and update the discard pile
+        song = [s.dictify() for s in random_song]
+        if len(song) == 1 and max_discard_size != 0:
+            self.discard_pile.append(song[0]['path'])
+            self.trim_list(max_discard_size)
+
+        return song
 
     def vote_song(self, user, song_id=None, video_url=None):
         """Vote for a song"""
@@ -222,9 +260,8 @@ class Scheduler(object):
 
     def play_next(self, skip=False):
         if self.empty():
-            random_song = self.get_random_song()['results']
+            random_song = self.get_random_song()
             if len(random_song) == 1:
-                self.update_discard_list(random_song[0])
                 self.vote_song('RANDOM', random_song[0]['id'])
 
         if not self.empty():
