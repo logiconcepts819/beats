@@ -306,7 +306,7 @@ class Scheduler(object):
                     return video.dictify()
                 else:
                     next_song = session.query(Song).get(next_packet.song_id)
-                    if random_song is not None:
+                    if random_song is None:
                         # Song was not randomly chosen, so update discard pile
                         self.update_discard_pile_with_song(
                             session, next_song.path)
