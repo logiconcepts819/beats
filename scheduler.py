@@ -39,6 +39,7 @@ SCHEDULER_INTERVAL_SEC = 0.25
 class Scheduler(object):
     virtual_time = 0.0
     discard_pile = deque([])
+    discard_set = Set([])
 
     active_sessions = 0
     """Number of users with currently queued songs"""
@@ -50,7 +51,32 @@ class Scheduler(object):
 
     def trim_list(self, max_list_size):
         while len(self.discard_pile) > max_list_size:
-            self.discard_pile.popleft()
+            self.remove_song_from_discard_pile()
+
+    def add_song_to_discard_pile(self, song):
+        if not song in self.discard_set:
+            self.discard_set.add(song)
+            self.discard_pile.append(song)
+
+    def remove_song_from_discard_pile(self):
+        song = self.discard_pile.popleft()
+        if song in self.discard_set:
+            self.discard_set.remove(song)
+
+    @staticmethod
+    def compute_max_discard_pile_size(db_size):
+        max_discard_size = int(DONT_REPEAT_FOR * db_size)
+        if MAX_DONT_REPEAT_FOR is not None:
+            max_discard_size = min(MAX_DONT_REPEAT_FOR, max_discard_size)
+        return max_discard_size
+
+    def update_discard_pile_with_song(self, session, song):
+        if DONT_REPEAT_FOR != 0.0 and MAX_DONT_REPEAT_FOR != 0:
+            count = session.query(func.count(Song.id)).scalar()
+            max_discard_size = self.compute_max_discard_pile_size(count)
+            if max_discard_size != 0:
+                self.add_song_to_discard_pile(song)
+                self.trim_list(max_discard_size)
 
     def get_random_song(self):
         # Algorithm based on http://stackoverflow.com/questions/5467174
@@ -72,12 +98,9 @@ class Scheduler(object):
         random_song = random_song.limit(1).all()
         session.commit()
 
-        # Compute the maximum size of the discard pile
-        max_discard_size = int(DONT_REPEAT_FOR * len(db_filenames))
-        if MAX_DONT_REPEAT_FOR is not None:
-            max_discard_size = min(MAX_DONT_REPEAT_FOR, max_discard_size)
-
         # Clean up the discard pile
+        max_discard_size = self.compute_max_discard_pile_size(
+            len(db_filenames))
         if max_discard_size == 0:
             # Everything gets weeded out in the discard pile in this case
             self.discard_pile.clear()
@@ -96,7 +119,7 @@ class Scheduler(object):
         # Obtain random song and update the discard pile
         song = [s.dictify() for s in random_song]
         if len(song) == 1 and max_discard_size != 0:
-            self.discard_pile.append(song[0]['path'])
+            self.add_song_to_discard_pile(song[0]['path'])
             self.trim_list(max_discard_size)
 
         return song
@@ -282,6 +305,7 @@ class Scheduler(object):
                     return video.dictify()
                 else:
                     next_song = session.query(Song).get(next_packet.song_id)
+                    self.update_discard_pile_with_song(session, next_song.path)
                     player.play_media(next_song)
                     next_song.history.append(
                         PlayHistory(user=next_packet.user,
