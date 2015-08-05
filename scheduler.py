@@ -46,18 +46,21 @@ class Scheduler(object):
         self._update_active_sessions()
         self._update_finish_times()
 
+    def trim_list(self):
+        ideal_list_size = int(DONT_REPEAT_FOR * song.count_num_songs())
+        if MAX_DONT_REPEAT_FOR is not None:
+            ideal_list_size = min(MAX_DONT_REPEAT_FOR, ideal_list_size)
+        while len(self.discard_pile) > ideal_list_size:
+            self.discard_pile.popleft()
+
     def update_discard_list(self, song_object):
         # Solution based on http://stackoverflow.com/questions/5467174
-        dont_repeat_for = int(DONT_REPEAT_FOR * song.count_num_songs())
-        if MAX_DONT_REPEAT_FOR is not None:
-            dont_repeat_for = min(MAX_DONT_REPEAT_FOR, dont_repeat_for)
-
-        if dont_repeat_for > 0: # An optimization
-            self.discard_pile.append(song_object['path'])
-            while len(self.discard_pile) > dont_repeat_for:
-                self.discard_pile.popleft()
+        self.discard_pile.append(song_object['path'])
+        self.trim_list()
 
     def get_random_song(self):
+        # Trim list in case the playlist size was reduced during playback
+        self.trim_list()
         return song.random_song_not_in_list(self.discard_pile)
 
     def vote_song(self, user, song_id=None, video_url=None):
